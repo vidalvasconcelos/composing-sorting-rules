@@ -1,0 +1,14 @@
+{
+  "exclude": [
+    "./node_modules"
+  ],
+  "compilerOptions": {
+    "baseUrl": "./src",
+    "moduleDetection": "force",
+    "module": "Preserve",
+    "resolveJsonModule": true,
+    "allowJs": true,
+    "esModuleInterop": true,
+    "isolatedModules": true
+  }
+}

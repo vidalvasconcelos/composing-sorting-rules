@@ -1,0 +1,28 @@
+{
+  "name": "@vidalvasconcelos/composing-sorting-rules",
+  "version": "1.0.0",
+  "license": "ISC",
+  "description": "Explore the Order module from fp-ts library.",
+  "keywords": [
+    "order",
+    "fp-ts"
+  ],
+  "scripts": {
+    "test": "node --import tsx --test src/**/*.spec.ts"
+  },
+  "dependencies": {
+    "fast-check": "^4.1.1",
+    "fast-check-io-ts": "^0.5.0",
+    "fp-ts": "^2.16.10",
+    "io-ts-types": "^0.5.19"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.27.0",
+    "@types/assert": "^1.5.11",
+    "@types/node": "^22.15.19",
+    "eslint": "^9.27.0",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.32.1"
+  }
+}
