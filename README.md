@@ -1,123 +1,161 @@
-# Composable Sorting with fp-ts
+# Composable Multi‑Criteria Sorting with fp-ts
 
-This repository demonstrates how to compose sort rules using the fp-ts Ord module, showcasing the power and elegance of functional programming principles.
+This repository shows how to model, derive, and compose ordering (sorting) rules using the `Ord` abstractions from [`fp-ts`](https://github.com/gcanti/fp-ts). The focus is on expressing multi-criteria sorting declaratively and **incrementally reusing** smaller building blocks.
 
-## Overview
+## Why Care About Composition?
+Traditional sorting code tends to be ad‑hoc: one long comparison function with nested `if` / `else` branches. That approach is:
+- Hard to extend (adding a new tie‑breaker risks breaking existing logic)
+- Hard to test in isolation (all concerns tangled together)
+- Imperative (focuses on control flow instead of intent)
 
-In functional programming, composability is a fundamental concept that allows us to build complex behaviors from simple, reusable components. This project illustrates how to create and compose sorting rules for different data types using the `Ord` module from the fp-ts library.
+`fp-ts/Ord` lets us:
+1. Start with primitive orderings (e.g. built‑in `string` ordering)
+2. Lift them to our domain types via `contramap`
+3. Combine many `Ord` instances (lexicographically) with the `Monoid` for `Ord`
+4. Reuse previously defined orderings across domains
 
-## Examples
+Result: Each rule states *what* we sort by, not *how* to juggle comparisons.
 
-### Basic Sorting
+## Domain Model
+```typescript
+interface Category {
+  readonly id: string;
+  readonly name: string
+}
 
-The repository contains examples for sorting both `Category` and `Product` types:
+interface Product {
+  readonly id: string;
+  readonly name: string;
+  readonly category: Category;
+}
+```
+(See the real definitions in `src/categories/category.ts` and `src/products/product.ts`).
 
-#### Category Sorting
+## Atomic (Primitive) Orderings
+We start from the canonical `string` ordering exported as `s.Ord`:
+```typescript
+import * as s from 'fp-ts/string';
+// s.Ord : Ord<string>
+```
+
+## Lifting with contramap
+`contramap` lets us focus an `Ord<A>` onto a structure `B` by providing a projection `B -> A`.
 
 ```typescript
 import * as Ord from 'fp-ts/Ord';
+import { pipe } from 'fp-ts/function';
 import * as s from 'fp-ts/string';
-import {pipe} from "fp-ts/function";
-import {Category} from "./category";
 
-/**
- * This function sorts the categories alphabetically by name.
- */
-export const categoriesAlphabeticallyOrdByName: Ord.Ord<Category> = pipe(
+// Category ordering by name
+export const ordCategoriesAlphabetically = pipe(
   s.Ord,
-  Ord.contramap((coupon: Category): string => coupon.name),
-)
-```
+  Ord.contramap((c: Category) => c.name),
+);
 
-This creates a sorting function that orders categories alphabetically by their name property.
-
-#### Product Sorting
-
-For products, we have multiple sorting criteria:
-
-```typescript
-/**
- * This function is used to sort products by their name
- * in ascending order.
- */
-export const productsAlphabeticallyOrdByName: Ord.Ord<Product> = pipe(
+// Product ordering by *its own* name
+export const ordProductsAlphabeticallyByName = pipe(
   s.Ord,
-  Ord.contramap((product: Product): string => product.name.toString()),
-)
+  Ord.contramap((p: Product) => p.name),
+);
 
-/**
- * This function is used to sort products by their category
- * in ascending order.
- */
-export const productsAlphabeticallyOrdByCategory: Ord.Ord<Product> = pipe(
-  categoriesAlphabeticallyOrdByName,
-  Ord.contramap((product: Product) => product.category),
-)
+// Product ordering by *its category* (reusing Category ordering!)
+export const ordProductsAlphabeticallyByCategory = pipe(
+  ordCategoriesAlphabetically,
+  Ord.contramap((p: Product) => p.category),
+);
 ```
+Notice how `ordProductsAlphabeticallyByCategory` **reuses** the category ordering—if later we change how categories are ordered (e.g. case‑insensitive), every dependent ordering benefits automatically.
 
-### The Power of Composition
-
-The real magic happens when we compose these sorting functions together:
+## Composing Multiple Criteria
+We often need “sort by Category name, then by Product name”. Instead of hand‑writing branching logic, we use the `Monoid` for `Ord` which combines orderings lexicographically:
 
 ```typescript
-/**
- * This functions is used to consolidate the product sort rules.
- */
-export const productsOrd = concatAll(Ord.getMonoid())([
-  productsAlphabeticallyOrdByCategory,
-  productsAlphabeticallyOrdByName,
-])
+import { concatAll } from 'fp-ts/Monoid';
+
+export const ordProducts = concatAll(Ord.getMonoid<Product>())([
+  ordProductsAlphabeticallyByCategory, // primary key
+  ordProductsAlphabeticallyByName,     // secondary (tie‑breaker)
+]);
 ```
+How it works:
+- The Monoid’s `concat` tries the first `Ord`.
+- If it returns `0` (values considered equal w.r.t. that criterion), it delegates to the next.
+- This yields a left‑to‑right lexicographic chain you can extend safely.
 
-This creates a composite sorting function that first sorts products by their category name, and then by their own name when categories are the same. The composition is achieved using the `concatAll` function from fp-ts/Monoid, which combines multiple `Ord` instances into a single one.
-
-## Why Composability Matters
-
-Composability is a cornerstone of functional programming for several reasons:
-
-1. **Reusability**: Each sorting function can be used independently or as part of a larger composition.
-2. **Maintainability**: Simple, focused functions are easier to understand, test, and maintain.
-3. **Flexibility**: New sorting criteria can be added without modifying existing code.
-4. **Declarative Style**: The code expresses what to do rather than how to do it, making it more readable.
-
-In our example, we can see how the `categoriesAlphabeticallyOrdByName` function is reused in the `productsAlphabeticallyOrdByCategory` function, demonstrating how composability promotes code reuse.
-
-## Testing
-
-The repository includes property-based tests using fast-check to verify the sorting behavior:
-
+### Adding New Tie‑Breakers
+Need a deterministic final rule? Add an `Ord` on `id`:
 ```typescript
-it('Should sort Products by Category and name', function () {
-  fc.assert(
-    fc.property(product, product, product, product, function (...products: Product[]) {
-      const result = products.sort(productsOrd.compare)
+export const ordProductsAlphabeticallyById = pipe(
+  s.Ord,
+  Ord.contramap((p: Product) => p.id),
+);
 
-      for (let i = 0, j = 1; i < result.length - 1; i++, j++) {
-        assert.ok(
-          s.Ord.compare(result[i].category.name, result[j].category.name) <= 0,
-          `Product in category ${result[i].category.name} must come before the Product in category ${result[j].name}`
-        )
+export const ordProductsStable = concatAll(Ord.getMonoid<Product>())([
+  ordProductsAlphabeticallyByCategory,
+  ordProductsAlphabeticallyByName,
+  ordProductsAlphabeticallyById, // ensures a total, deterministic ordering
+]);
+```
+No existing code modified—only appended.
 
-        if (result[i].category.name === result[j].category.name) {
-          assert.ok(
-            s.Ord.compare(result[i].name, result[j].name) <= 0,
-            `Product ${result[i].name} must come before Product ${result[j].name}`
-          )
-        }
-      }
-    }),
-  );
-});
+## Putting It To Use
+Example usage in plain TypeScript:
+```typescript
+import { ordProducts } from './src/products';
+import * as A from 'fp-ts/Array';
+import { pipe } from 'fp-ts/function';
+
+// Suppose we have an in‑memory list
+const products: Product[] = [ /* ... */ ];
+
+// Turn the Ord into a comparison function for native Array#sort
+const sortedNative = [...products].sort(ordProducts.compare);
+
+// Or stay purely functional using fp-ts Array utilities
+const sortedFunctional = pipe(products, A.sort(ordProducts));
 ```
 
-These tests ensure that our composed sorting functions work as expected.
+## Mental Model Recap
+| Concept | Role |
+|---------|------|
+| `Ord<A>` | Describes total ordering for `A` |
+| `contramap` | Derives an `Ord<B>` from `Ord<A>` + `B -> A` |
+| `Monoid` for `Ord` | Lexicographically chains multiple orderings |
+| Reuse | Small `Ord` blocks compose; changes propagate | 
 
-## Conclusion
+## Benefits Achieved
+- Declarative: Each rule is a tiny, intention‑revealing value.
+- Extensible: New criteria = append to the list, not edit internals.
+- Reusable: Category ordering reused inside product ordering.
+- Testable: Each `Ord` can be property‑tested (antisymmetry, transitivity, totality).
+- Maintainable: Change a projection once; consumers automatically adopt it.
 
-This repository demonstrates how the fp-ts library, particularly the Ord module, enables the creation of composable sorting rules. By leveraging functional programming principles, we can build complex sorting logic from simple, reusable components, resulting in code that is more maintainable, flexible, and expressive.
+## Implementation Map
+| File | Key Exports |
+|------|-------------|
+| `src/categories/category.ts` | `Category`, `ordCategoriesAlphabetically` |
+| `src/products/product.ts` | `Product`, `ordProductsAlphabeticallyByName`, `ordProductsAlphabeticallyByCategory`, `ordProducts` |
 
-The ability to compose functions is not just a technical feature but a powerful design principle that leads to better software architecture. As shown in this example, composability allows us to express complex business rules in a clear, concise, and modular way.
+## Extending Further (Ideas)
+- Case‑insensitive ordering: wrap `c.name.toLocaleLowerCase()`.
+- Locale / collation awareness via `Intl.Collator` to handle diacritics.
+- Optional / nullable fields: compose with `Ord` instances that push `null` to start/end.
+- Reverse ordering: `Ord.reverse(ordProducts)` for descending variants.
+- Derive ordering for tuples: `Ord.tuple(ordA, ordB, ...)` when structure already decomposes.
 
-## Notes
+## Next Steps (If You Want More)
+- Add property‑based tests with `fast-check` (not yet included) to assert ordering laws.
+- Provide a benchmark comparing chained `Ord` vs bespoke comparator.
+- Publish as a small package exposing reusable helpers for common multi‑criteria patterns.
 
-*Disclaimer: This README file was built by Junie, the pair programming tool from JetBrains.*
+## Minimal Setup
+Install dependencies:
+```bash
+npm install
+```
+(No runtime scripts are defined—import the source in your own project or REPL.)
+
+## Glossary
+- Lexicographic Composition: Compare by first criterion; if equal, move to next.
+- Projection (aka accessor): A function extracting the primitive value used for ordering.
+- Total Ordering: Every pair of elements is comparable (no incomparable states).
